@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -12,9 +13,12 @@ var userNames []string
 var userIds []string
 
 type oktaUser struct {
-	id     string
-	login  string
-	groups []string
+	FirstName string   `json:"firstName"`
+	LastName  string   `json:"lastName"`
+	ID        string   `json:"id"`
+	Login     string   `json:"login"`
+	Status    string   `json:"status"`
+	Groups    []string `json:"groups"`
 }
 
 func main() {
@@ -28,12 +32,23 @@ func main() {
 		return
 	}
 
-	userNames, userIds = getAllUsers(client)
+	users, err := getAllUsers(client)
 
-	for i, userid := range userIds {
-		userGroups := getUserGroups(userid, client)
-		fmt.Printf("User with ID %s and name %s is in groups: %v\n", userid, userNames[i], userGroups)
+	for _, user := range users {
+		user.Groups = getUserGroups(user.ID, client)
+		//fmt.Printf("User with ID %s and name %s is in groups: %v\n", user.id, user.login, user.groups)
+		user.print()
 	}
+}
+
+func (u oktaUser) print() {
+	jsonData, err := json.MarshalIndent(u, "", "    ")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	//fmt.Printf("%+v\n", jsonData)
+	fmt.Println(string(jsonData))
 }
 
 func getUserGroups(u string, client *okta.Client) []string {
@@ -55,7 +70,7 @@ func getUserGroups(u string, client *okta.Client) []string {
 	return groupNames
 }
 
-func getAllUsers(client *okta.Client) ([]string, []string) {
+func getAllUsers(client *okta.Client) ([]oktaUser, error) {
 	ctx := context.TODO()
 	users, resp, err := client.User.ListUsers(ctx, nil)
 	if err != nil {
@@ -66,13 +81,21 @@ func getAllUsers(client *okta.Client) ([]string, []string) {
 		log.Fatalf("Failed to retrieve users: %v", resp.Status)
 	}
 
+	var oktaUsers []oktaUser
+
 	for _, user := range users {
 		if login, ok := (*user.Profile)["login"].(string); ok {
-			userNames = append(userNames, login)
+			oktaUser := oktaUser{
+				FirstName: (*user.Profile)["firstName"].(string),
+				LastName:  (*user.Profile)["lastName"].(string),
+				ID:        user.Id,
+				Login:     login,
+				Status:    user.Status,
+			}
+			oktaUsers = append(oktaUsers, oktaUser)
 		}
-		userIds = append(userIds, user.Id)
 	}
-	return userNames, userIds
+	return oktaUsers, nil
 }
 
 func createOktaClient(orgUrl string, token string) (*okta.Client, error) {
