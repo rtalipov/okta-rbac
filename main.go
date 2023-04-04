@@ -2,42 +2,89 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/okta/okta-sdk-golang/v2/okta"
+	"github.com/okta/okta-sdk-golang/v2/okta/query"
 )
 
-var userNames []string
-var userIds []string
-
 type oktaUser struct {
-	FirstName string   `json:"firstName"`
-	LastName  string   `json:"lastName"`
 	ID        string   `json:"id"`
 	Login     string   `json:"login"`
+	FirstName string   `json:"firstName"`
+	LastName  string   `json:"lastName"`
 	Status    string   `json:"status"`
 	Groups    []string `json:"groups"`
 }
 
 func main() {
+	orgUrl := os.Getenv("OKTA_ORG_URL")
+	token := os.Getenv("OKTA_API_TOKEN")
 
-	orgUrl := "https://dev-94800730.okta.com"
-	token := "00nBYYHhu3K_gs_5mtwudGAiElM-7CEEligKIfL37A"
+	csvFilename := flag.String("f", "okta_users.csv", "Generated csv file name")
+	outputFormat := flag.String("o", "csv", "Output format (csv|json)")
+	excludedGroups := flag.String("e", "Everyone", "Excluded groups from reporting")
+	userQuery := flag.String("q", "", "User query options")
+	flag.Parse()
 
-	client, err := createOktaClient(orgUrl, token)
+	_, client, err := createOktaClient(orgUrl, token)
 	if err != nil {
 		fmt.Printf("Error creating Okta client: %v\n", err)
 		return
 	}
 
-	users, err := getAllUsers(client)
+	filter := query.NewQueryParams(query.WithFilter(*userQuery))
+	users, err := getUsers(client, filter)
+	if err != nil {
+		fmt.Printf("Error getting users: %v\n", err)
+		return
+	}
 
-	for _, user := range users {
-		user.Groups = getUserGroups(user.ID, client)
-		//fmt.Printf("User with ID %s and name %s is in groups: %v\n", user.id, user.login, user.groups)
-		user.print()
+	if *outputFormat == "csv" {
+		file, err := os.Create(*csvFilename)
+		if err != nil {
+			fmt.Printf("Error creating csv file: %v\n", err)
+			os.Exit(1)
+		}
+		defer file.Close()
+
+		writer := csv.NewWriter(file)
+		defer writer.Flush()
+
+		err = writer.Write([]string{"Login", "FistName", "LastName", "Status", "Groups"})
+		if err != nil {
+			fmt.Printf("Error writing header to file: %v\n", err)
+			os.Exit(1)
+		}
+
+		for _, user := range users {
+			user.Groups = getUserGroups(user.ID, client)
+			filteredGroups := excludeGroups(user.Groups, *excludedGroups)
+
+			row := []string{user.Login, user.FirstName, user.LastName, user.Status}
+			row = append(row, strings.Join(filteredGroups, ","))
+
+			err := writer.Write(row)
+			if err != nil {
+				fmt.Printf("Error writing rows to file: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	} else if *outputFormat == "json" {
+		for _, user := range users {
+			userGroups := getUserGroups(user.ID, client)
+			filteredGroups := excludeGroups(userGroups, *excludedGroups)
+			user.Groups = filteredGroups
+			user.print()
+		}
+	} else {
+		fmt.Printf("Unsupported output format: %v\n", *outputFormat)
 	}
 }
 
@@ -47,7 +94,6 @@ func (u oktaUser) print() {
 		fmt.Println(err)
 		return
 	}
-	//fmt.Printf("%+v\n", jsonData)
 	fmt.Println(string(jsonData))
 }
 
@@ -70,9 +116,9 @@ func getUserGroups(u string, client *okta.Client) []string {
 	return groupNames
 }
 
-func getAllUsers(client *okta.Client) ([]oktaUser, error) {
+func getUsers(client *okta.Client, filter *query.Params) ([]oktaUser, error) {
 	ctx := context.TODO()
-	users, resp, err := client.User.ListUsers(ctx, nil)
+	users, resp, err := client.User.ListUsers(ctx, filter)
 	if err != nil {
 		fmt.Printf("Error getting all users: %v\n", err)
 	}
@@ -86,23 +132,40 @@ func getAllUsers(client *okta.Client) ([]oktaUser, error) {
 	for _, user := range users {
 		if login, ok := (*user.Profile)["login"].(string); ok {
 			oktaUser := oktaUser{
-				FirstName: (*user.Profile)["firstName"].(string),
-				LastName:  (*user.Profile)["lastName"].(string),
 				ID:        user.Id,
 				Login:     login,
+				FirstName: (*user.Profile)["firstName"].(string),
+				LastName:  (*user.Profile)["lastName"].(string),
 				Status:    user.Status,
 			}
 			oktaUsers = append(oktaUsers, oktaUser)
 		}
 	}
-	return oktaUsers, nil
+	return oktaUsers, err
 }
 
-func createOktaClient(orgUrl string, token string) (*okta.Client, error) {
-	ctx := context.TODO()
+// Excluding filtered groups
+func excludeGroups(allGroups []string, excludedGroups string) []string {
 
-	ctx, client, err := okta.NewClient(
-		ctx,
+	includedGroups := []string{}
+	for _, group := range allGroups {
+		excluded := false
+		for _, excludedGroup := range strings.Split(excludedGroups, ",") {
+			if group == excludedGroup {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			includedGroups = append(includedGroups, group)
+		}
+	}
+	return includedGroups
+}
+
+func createOktaClient(orgUrl string, token string) (ctx context.Context, client *okta.Client, err error) {
+	ctx, client, err = okta.NewClient(
+		context.TODO(),
 		okta.WithOrgUrl(orgUrl),
 		okta.WithToken(token),
 	)
@@ -111,10 +174,5 @@ func createOktaClient(orgUrl string, token string) (*okta.Client, error) {
 		fmt.Printf("Error: %v\n", err)
 	}
 
-	return client, nil
+	return ctx, client, err
 }
-
-// for index, user := range users {
-// 	fmt.Printf("User %d: %+v\n", index, (*user.Profile)["login"])
-// }
-//fixed following the article: https://devforum.okta.com/t/get-login-details-from-a-user-profile-using-go-lang-sdk/14398
