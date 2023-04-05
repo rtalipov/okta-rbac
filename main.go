@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -27,10 +26,10 @@ func main() {
 	orgUrl := os.Getenv("OKTA_ORG_URL")
 	token := os.Getenv("OKTA_API_TOKEN")
 
-	csvFilename := flag.String("f", "okta_users.csv", "Generated csv file name")
-	outputFormat := flag.String("o", "csv", "Output format (csv|json)")
-	excludedGroups := flag.String("e", "Everyone", "Excluded groups from reporting")
-	userQuery := flag.String("q", "", "User query options")
+	csvFilename := flag.String("file", "okta_users.csv", "Generated csv file name")
+	outputFormat := flag.String("output", "csv", "Output format (csv|json)")
+	excludedGroups := flag.String("exclude", "Everyone", "Excluded groups from reporting")
+	userQuery := flag.String("query", "", "User query options")
 	flag.Parse()
 
 	_, client, err := createOktaClient(orgUrl, token)
@@ -57,7 +56,7 @@ func main() {
 		writer := csv.NewWriter(file)
 		defer writer.Flush()
 
-		err = writer.Write([]string{"Login", "FistName", "LastName", "Status", "Groups"})
+		err = writer.Write([]string{"ID", "Login", "FistName", "LastName", "Status", "Groups"})
 		if err != nil {
 			fmt.Printf("Error writing header to file: %v\n", err)
 			os.Exit(1)
@@ -67,7 +66,7 @@ func main() {
 			user.Groups = getUserGroups(user.ID, client)
 			filteredGroups := excludeGroups(user.Groups, *excludedGroups)
 
-			row := []string{user.Login, user.FirstName, user.LastName, user.Status}
+			row := []string{user.ID, user.Login, user.FirstName, user.LastName, user.Status}
 			row = append(row, strings.Join(filteredGroups, ","))
 
 			err := writer.Write(row)
@@ -91,7 +90,7 @@ func main() {
 func (u oktaUser) print() {
 	jsonData, err := json.MarshalIndent(u, "", "    ")
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Error printing json: %v\n", err)
 		return
 	}
 	fmt.Println(string(jsonData))
@@ -102,10 +101,12 @@ func getUserGroups(u string, client *okta.Client) []string {
 	groups, resp, err := client.User.ListUserGroups(ctx, u)
 	if err != nil {
 		fmt.Printf("Error getting group list for user: %v\n", err)
+		return []string{}
 	}
 
 	if resp.StatusCode != 200 {
-		log.Fatalf("Failed to retrieve groups: %v", resp.Status)
+		fmt.Printf("Failed to retrieve groups: %v", resp.Status)
+		return []string{}
 	}
 
 	var groupNames []string
@@ -124,7 +125,7 @@ func getUsers(client *okta.Client, filter *query.Params) ([]oktaUser, error) {
 	}
 
 	if resp.StatusCode != 200 {
-		log.Fatalf("Failed to retrieve users: %v", resp.Status)
+		fmt.Printf("Failed to retrieve users: %v", resp.Status)
 	}
 
 	var oktaUsers []oktaUser
@@ -144,10 +145,9 @@ func getUsers(client *okta.Client, filter *query.Params) ([]oktaUser, error) {
 	return oktaUsers, err
 }
 
-// Excluding filtered groups
 func excludeGroups(allGroups []string, excludedGroups string) []string {
 
-	includedGroups := []string{}
+	filteredGroups := []string{}
 	for _, group := range allGroups {
 		excluded := false
 		for _, excludedGroup := range strings.Split(excludedGroups, ",") {
@@ -157,10 +157,10 @@ func excludeGroups(allGroups []string, excludedGroups string) []string {
 			}
 		}
 		if !excluded {
-			includedGroups = append(includedGroups, group)
+			filteredGroups = append(filteredGroups, group)
 		}
 	}
-	return includedGroups
+	return filteredGroups
 }
 
 func createOktaClient(orgUrl string, token string) (ctx context.Context, client *okta.Client, err error) {
@@ -171,7 +171,8 @@ func createOktaClient(orgUrl string, token string) (ctx context.Context, client 
 	)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Error creating Okta client: %v\n", err)
+		return nil, nil, err
 	}
 
 	return ctx, client, err

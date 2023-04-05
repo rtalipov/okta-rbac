@@ -8,7 +8,7 @@ The report can be generated in either CSV of JSON format
 
 To use this program, you need to provide your Okta organization URL and API token as environment variables:
 
-```
+```text
 export OKTA_ORG_URL=<https://your-okta-domain.com>
 export OKTA_API_TOKEN=your-api-token
 ```
@@ -17,22 +17,22 @@ Run the program with the decired command-line options
 
 To output in JSON:
 
-```
-okta-rbac -o json -e group1,group2 -q "status eq \"ACTIVE\""
+```text
+okta-rbac -output json -exclude group1,group2 -query "status eq \"ACTIVE\""
 ```
 
 To output in CSV:
 
-```
-okta-rbac -f report.csv -e group1,group2 -q "status eq \"ACTIVE\""
+```text
+okta-rbac -file report.csv -exclude group1,group2 -query "status eq \"ACTIVE\""
 ```
 
 Available options:
 
-- `-e`: a comma-separated list of excluded groups from the report (default is "Everyone")
-- `-f`: the name of output csv file (default is "okta_users.csv")
-- `-o`: output format CSV or JSON (default is "csv")
-- `-q`: User query options in Okta Query Language
+- `-exclude`: a comma-separated list of excluded groups from the report (default is "Everyone")
+- `-file`: the name of output csv file (default is "okta_users.csv")
+- `-output`: output format CSV or JSON (default is "csv")
+- `-query`: User query options in Okta Query Language
 
 ## License
 
