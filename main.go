@@ -23,14 +23,20 @@ type oktaUser struct {
 }
 
 func main() {
-	orgUrl := os.Getenv("OKTA_ORG_URL")
-	token := os.Getenv("OKTA_API_TOKEN")
+	orgUrl := getEnv("OKTA_ORG_URL")
+	token := getEnv("OKTA_API_TOKEN")
 
-	csvFilename := flag.String("file", "okta_users.csv", "Generated csv file name")
+	fileName := flag.String("file", "", "Output file name")
 	outputFormat := flag.String("output", "csv", "Output format (csv|json)")
 	excludedGroups := flag.String("exclude", "Everyone", "Excluded groups from reporting")
 	userQuery := flag.String("query", "", "User query options")
 	flag.Parse()
+
+	if *outputFormat == "csv" && *fileName == "" {
+		*fileName = "okta_users.csv"
+	} else if *outputFormat == "json" && *fileName == "" {
+		*fileName = "okta_users.json"
+	}
 
 	_, client, err := createOktaClient(orgUrl, token)
 	if err != nil {
@@ -46,7 +52,7 @@ func main() {
 	}
 
 	if *outputFormat == "csv" {
-		file, err := os.Create(*csvFilename)
+		file, err := os.Create(*fileName)
 		if err != nil {
 			fmt.Printf("Error creating csv file: %v\n", err)
 			os.Exit(1)
@@ -75,25 +81,46 @@ func main() {
 				os.Exit(1)
 			}
 		}
+		fmt.Printf("Saved results to: %v\n", *fileName)
 	} else if *outputFormat == "json" {
+		file, err := os.Create(*fileName)
+		if err != nil {
+			fmt.Printf("Error creating json file: %v\n", err)
+			os.Exit(1)
+		}
+		defer file.Close()
+
+		var allUsers []oktaUser
 		for _, user := range users {
 			userGroups := getUserGroups(user.ID, client)
 			filteredGroups := excludeGroups(userGroups, *excludedGroups)
 			user.Groups = filteredGroups
-			user.print()
+			allUsers = append(allUsers, user)
 		}
+		jsonData, err := json.MarshalIndent(allUsers, "", "    ")
+		if err != nil {
+			fmt.Printf("Error identing json data: %v\n", err)
+			return
+		}
+
+		_, err = file.Write(jsonData)
+		if err != nil {
+			fmt.Printf("Error writing json to file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Saved results to: %v\n", *fileName)
 	} else {
 		fmt.Printf("Unsupported output format: %v\n", *outputFormat)
 	}
 }
 
-func (u oktaUser) print() {
-	jsonData, err := json.MarshalIndent(u, "", "    ")
-	if err != nil {
-		fmt.Printf("Error printing json: %v\n", err)
-		return
+func getEnv(envVar string) string {
+	value, exists := os.LookupEnv(envVar)
+	if !exists {
+		fmt.Printf("Environmental variable is not set: %s\n", envVar)
+		os.Exit(1)
 	}
-	fmt.Println(string(jsonData))
+	return value
 }
 
 func getUserGroups(u string, client *okta.Client) []string {
